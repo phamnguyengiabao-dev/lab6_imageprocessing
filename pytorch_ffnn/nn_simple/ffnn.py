@@ -17,18 +17,18 @@ def sigmoid_derivative(s):
 # Feed Forward Neural Network class
 class FFNeuralNetwork(nn.Module):
     # initialization function
-    def __init__(self, ):
+    def __init__(self, inputSize=3, hiddenSize=4, outputSize=1):
         # init function of base class
         super(FFNeuralNetwork, self).__init__()
 
         # corresponding size of each layer
-        self.inputSize = 3
-        self.hiddenSize = 4
-        self.outputSize = 1
+        self.inputSize = inputSize
+        self.hiddenSize = hiddenSize
+        self.outputSize = outputSize
 
         # random weights from a normal distribution
-        self.W1 = torch.randn(self.inputSize, self.hiddenSize)  # 3 X 4 tensor
-        self.W2 = torch.randn(self.hiddenSize, self.outputSize)  # 4 X 1 tensor
+        self.W1 = torch.randn(self.inputSize, self.hiddenSize)
+        self.W2 = torch.randn(self.hiddenSize, self.outputSize)
 
         self.z = None
         self.z_activation = None
