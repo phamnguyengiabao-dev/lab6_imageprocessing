@@ -45,9 +45,9 @@ visualize_data(train_loader)
 # ActivationLayer(activation, derivative)
 
 net = Network()
-net.add(FCLayer(28 * 28, 128))               # Input to Hidden
+net.add(FCLayer(28 * 28, 128))               # Input [Batch, 784] -> Hidden [Batch, 128]
 net.add(ActivationLayer(Activation.tanh, ActivationPrime.tanh_derivative))
-net.add(FCLayer(128, 10))                    # Hidden to Output
+net.add(FCLayer(128, 10))                    # Hidden [Batch, 128] -> Output [Batch, 10]
 net.add(ActivationLayer(Activation.tanh, ActivationPrime.tanh_derivative))
 
 # 4. Visualize Architecture
@@ -63,54 +63,106 @@ visualize_model(net)
 # 5. Training Setup
 net.use(Loss.mse, LossPrime.mse_prime)
 
-print("\nStarting Training...")
+print("\n" + "="*30)
+print("TRAINING PROGRESS")
+print("="*30)
 epochs = 5
 learning_rate = 0.1
 
-# The `net.fit` method in Sample #2 takes full x_train and y_train tensors loop internally?
-# Let's check `network.py`: yes, `fit(self, x_train, y_train, epochs, alpha)`
-# and it iterates `epochs`, then `samples`. 
-# THIS IS VERY SLOW for full MNIST (60k samples).
-# ALSO it expects input to be list of tensors or tensor [Samples, Features] ?
-# From test_network_simple.py: x_train = torch.tensor(...) shape [4, 1, 2] ? No.
-# x_train = torch.tensor([[[0, 0]], [[0, 1]]...]) -> Shape [4, 1, 2]
-# y_train = torch.tensor([[[0]], [[1]]...]) -> Shape [4, 1, 1]
-# So it expects [Batch/Sample, 1, Feature] format for single sample processing inside loop?
-# Inner loop: `for k in range(samples): output = x_train[k] ...`
-# So x_train[k] should be the input vector for one sample.
-# We should reshape our data to match this or modify `fit` to handle batches.
-# Given strict instruction to "Modify sample", better to adapt data to sample's expectation if possible, 
-# or copy-paste logic and adapt for batch if too slow. 
-# For demonstration, we can use a smaller subset of MNIST to keep it fast enough for this naive implementation.
+subset_size = None # Use Full Dataset
+if subset_size:
+    print(f"Using subset of {subset_size} samples for training to fit naive generic implementation speed.")
+    # Prepare data in correct shape [N, 1, 784] and [N, 1, 10]
+    data_iter = iter(torch.utils.data.DataLoader(train_dataset, batch_size=subset_size, shuffle=True))
+    images, labels = next(data_iter)
 
-subset_size = 1000
-print(f"Using subset of {subset_size} samples for training to fit naive generic implementation speed.")
+    # Reshape input: [N, 784] -> [N, 1, 784]
+    x_train = images.unsqueeze(1) 
 
-# Prepare data in correct shape [N, 1, 784] and [N, 1, 10]
-data_iter = iter(torch.utils.data.DataLoader(train_dataset, batch_size=subset_size, shuffle=True))
-images, labels = next(data_iter)
-
-# Reshape input: [N, 784] -> [N, 1, 784]
-x_train = images.unsqueeze(1) 
-
-# One-hot encode targets
-y_onehot = torch.zeros(labels.size(0), 10)
-y_onehot.scatter_(1, labels.view(-1, 1), 1)
-# Reshape target: [N, 10] -> [N, 1, 10]
-y_train = y_onehot.unsqueeze(1)
+    # One-hot encode targets
+    y_onehot = torch.zeros(labels.size(0), 10)
+    y_onehot.scatter_(1, labels.view(-1, 1), 1)
+    # Reshape target: [N, 10] -> [N, 1, 10]
+    y_train = y_onehot.unsqueeze(1)
+else:
+    print("Using FULL MNIST dataset with Mini-Batch Training.")
+    # For full dataset, we should load it all into memory if it fits (60k is fine)
+    # Or modify fit to take loader. 
+    # Current fit takes tensors. Let's load full dataset into tensors.
+    
+    loader_full = torch.utils.data.DataLoader(train_dataset, batch_size=60000, shuffle=True)
+    images, labels = next(iter(loader_full))
+    
+    # [60000, 784] -> [60000, 1, 784] 
+    # Actually, `fc_layer` does matmul. 
+    # If Input is [Batch, 1, 784] -> FC -> [Batch, 1, Hidden].
+    # But conventionally we use [Batch, 784].
+    # Let's check `fc_layer.py`: `self.out_data = torch.matmul(self.in_data, self.weights) + self.bias`
+    # Weights [In, Out].
+    # If InData [Batch, In] -> Out [Batch, Out].
+    # This is correct. We do NOT need the extra dimension 1 if we process strictly in batches.
+    # BUT, `forward` in `network.py` does loop layers.
+    # Wait, the previous failing implementation used `x_train[k]` which was a single vector.
+    # If we pass `x_batch` of shape `[32, 784]`, then `fc_layer` logic holds.
+    # So we should pass `x_train` as `[N, 784]`, NOT `[N, 1, 784]`.
+    # Let's correct this.
+    
+    x_train = images # [60000, 784]
+    
+    y_onehot = torch.zeros(labels.size(0), 10)
+    y_onehot.scatter_(1, labels.view(-1, 1), 1)
+    y_train = y_onehot # [60000, 10]
 
 # Train
-net.fit(x_train, y_train, epochs=epochs, alpha=learning_rate)
+# Now using batch_size=64
+net.fit(x_train, y_train, epochs=epochs, alpha=learning_rate, batch_size=64)
 
-# 6. Prediction
-print("\nTesting prediction...")
-test_images, test_labels = next(iter(test_loader))
-x_test = test_images[0].unsqueeze(0).unsqueeze(0) # [1, 1, 784]
-test_label = test_labels[0].item()
+# 6. Final Evaluation
+print("\n" + "="*30)
+print("FINAL EVALUATION")
+print("="*30)
+print("Testing prediction on separate test set (1 item)...")
+# Note: Predicting 10k items with this naive implementation in loop might be slow.
+# Let's assess accuracy on a subset of Test data (e.g. 100 items)
+test_subset_size = 100
+print(f"Evaluating on random {test_subset_size} test samples...")
 
-output = net.predicts(x_test)[0] # Returns list of outputs, get first
-predicted_label = torch.argmax(output).item()
+test_loader_subset = torch.utils.data.DataLoader(test_dataset, batch_size=test_subset_size, shuffle=True)
+test_images, test_labels = next(iter(test_loader_subset))
 
-print(f"True Label: {test_label}")
+# Reshape for prediction loop: [N, 784] list or tensor
+# We updated training to use [N, 784], so prediction should also use [N, 784]
+x_test_batch = test_images # [N, 784]
+
+outputs = net.predicts(x_test_batch)
+
+correct = 0
+for i in range(len(outputs)):
+    # Output of layer is [10] or [1, 10] depending on if predict loop processes one by one
+    # predict in network.py:
+    # for i in range(samples): output = data[i]; ...
+    # data[i] from [N, 784] is [784].
+    # Forward pass on [784]: MatMul([784], [784, 128]) -> error if 1D?
+    # PyTorch handles 1D matmul automatically? 
+    # torch.matmul(vector, matrix) -> vector.
+    # So output will be [128].
+    # Finally [10].
+    
+    pred = torch.argmax(outputs[i])
+    true = test_labels[i]
+    if pred == true:
+        correct += 1
+
+print(f"Test Subset Accuracy: {100 * correct / test_subset_size:.2f}% ({correct}/{test_subset_size})")
+
+print("-" * 20)
+print("Single Prediction Demo:")
+x_single = test_images[0] # [784]
+output_single = net.predict(x_single) # Use single predict method
+predicted_label = torch.argmax(output_single).item()
+true_label = test_labels[0].item()
+
+print(f"True Label:      {true_label}")
 print(f"Predicted Label: {predicted_label}")
-print(f"Output: {output}")
+print(f"Confidence:      {torch.max(output_single).item():.4f}")
+print("="*30)
